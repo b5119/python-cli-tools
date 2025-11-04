@@ -131,7 +131,7 @@ Python 3.8 or higher
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/python-cli-tools.git
+git clone https://github.com/b5119/python-cli-tools.git
 cd python-cli-tools
 ```
 
