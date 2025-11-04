@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """
 Bulk File Renamer
 Rename multiple files at once using patterns, regex, or sequential numbering

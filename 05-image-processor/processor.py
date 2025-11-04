@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """
 Batch Image Processor
 Process multiple images at once: resize, convert, compress, watermark

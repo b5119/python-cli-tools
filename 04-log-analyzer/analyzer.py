@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """
 Log File Analyzer
 Parse and analyze log files to extract insights and generate reports
