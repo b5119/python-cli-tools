@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 File Organizer
 Automatically organize files in a directory by type, date, or custom rules
