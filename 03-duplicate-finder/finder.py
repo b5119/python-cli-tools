@@ -1,339 +1,294 @@
-#!/usr/bin/env python3
 """
-Batch Image Processor
-Process multiple images at once: resize, convert, compress, watermark
-Requires: pip install Pillow
+Duplicate File Finder
+Find and manage duplicate files based on content (MD5/SHA256 hashing)
 """
 
+import os
+import hashlib
 import argparse
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
-import os
+from collections import defaultdict
+import shutil
 
-class ImageProcessor:
-    def __init__(self, input_dir, output_dir=None):
-        self.input_dir = Path(input_dir)
-        self.output_dir = Path(output_dir) if output_dir else self.input_dir / 'processed'
-        self.supported_formats = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp', '.tiff'}
-        self.processed_count = 0
+class DuplicateFinder:
+    def __init__(self, directory, recursive=False):
+        self.directory = Path(directory)
+        self.recursive = recursive
+        self.duplicates = defaultdict(list)
+        self.hash_algorithm = 'md5'
     
-    def get_images(self):
-        """Get list of image files"""
-        images = []
-        for file_path in self.input_dir.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in self.supported_formats:
-                images.append(file_path)
-        return images
-    
-    def resize_images(self, width=None, height=None, maintain_aspect=True):
-        """Resize images to specified dimensions"""
-        if not self.input_dir.exists():
-            print(f"❌ Input directory '{self.input_dir}' does not exist!")
+    def find_duplicates(self, algorithm='md5'):
+        """Find duplicate files using file hashing"""
+        self.hash_algorithm = algorithm
+        
+        if not self.directory.exists():
+            print(f"❌ Directory '{self.directory}' does not exist!")
             return
         
-        images = self.get_images()
-        if not images:
-            print("❌ No images found!")
-            return
+        print(f"🔍 Scanning for duplicate files in: {self.directory}")
+        print(f"Algorithm: {algorithm.upper()}")
+        print(f"{'Recursive: Yes' if self.recursive else 'Recursive: No'}\n")
         
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        # First pass: Group by size (optimization)
+        size_groups = defaultdict(list)
+        files = self._get_files()
         
-        print(f"🖼️  Resizing {len(images)} image(s)...")
-        print(f"Target size: {width or 'auto'}x{height or 'auto'}")
-        print(f"Maintain aspect ratio: {maintain_aspect}\n")
+        print(f"📊 Found {len(files)} file(s) to analyze...")
         
-        for img_path in images:
+        for file_path in files:
             try:
-                with Image.open(img_path) as img:
-                    original_size = img.size
-                    
-                    if maintain_aspect:
-                        # Calculate new size maintaining aspect ratio
-                        if width and not height:
-                            ratio = width / img.width
-                            new_size = (width, int(img.height * ratio))
-                        elif height and not width:
-                            ratio = height / img.height
-                            new_size = (int(img.width * ratio), height)
-                        elif width and height:
-                            img.thumbnail((width, height), Image.Resampling.LANCZOS)
-                            new_size = img.size
-                        else:
-                            print(f"⚠️  Skipping {img_path.name}: No dimensions specified")
-                            continue
-                    else:
-                        new_size = (width or img.width, height or img.height)
-                    
-                    if maintain_aspect and (width and not height or height and not width):
-                        resized = img.resize(new_size, Image.Resampling.LANCZOS)
-                    else:
-                        resized = img
-                    
-                    output_path = self.output_dir / img_path.name
-                    resized.save(output_path, quality=95)
-                    
-                    print(f"✅ {img_path.name}: {original_size} → {new_size}")
-                    self.processed_count += 1
-                    
+                size = file_path.stat().st_size
+                size_groups[size].append(file_path)
             except Exception as e:
-                print(f"❌ Error processing {img_path.name}: {e}")
+                print(f"⚠️  Error accessing {file_path}: {e}")
         
-        print(f"\n✨ Processed {self.processed_count} image(s)")
-        print(f"📁 Output directory: {self.output_dir}")
-    
-    def convert_format(self, output_format):
-        """Convert images to different format"""
-        if not self.input_dir.exists():
-            print(f"❌ Input directory '{self.input_dir}' does not exist!")
-            return
+        # Second pass: Hash files with same size
+        print("\n🔐 Computing file hashes...")
+        hash_dict = {}
+        processed = 0
         
-        images = self.get_images()
-        if not images:
-            print("❌ No images found!")
-            return
-        
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        output_format = output_format.lower().replace('.', '')
-        
-        print(f"🔄 Converting {len(images)} image(s) to {output_format.upper()}...\n")
-        
-        for img_path in images:
-            try:
-                with Image.open(img_path) as img:
-                    # Convert RGBA to RGB for JPEG
-                    if output_format in ['jpg', 'jpeg'] and img.mode in ['RGBA', 'LA', 'P']:
-                        rgb_img = Image.new('RGB', img.size, (255, 255, 255))
-                        if img.mode == 'P':
-                            img = img.convert('RGBA')
-                        rgb_img.paste(img, mask=img.split()[-1] if img.mode in ['RGBA', 'LA'] else None)
-                        img = rgb_img
-                    
-                    output_name = img_path.stem + f'.{output_format}'
-                    output_path = self.output_dir / output_name
-                    
-                    img.save(output_path, quality=95)
-                    
-                    print(f"✅ {img_path.name} → {output_name}")
-                    self.processed_count += 1
-                    
-            except Exception as e:
-                print(f"❌ Error converting {img_path.name}: {e}")
-        
-        print(f"\n✨ Converted {self.processed_count} image(s)")
-        print(f"📁 Output directory: {self.output_dir}")
-    
-    def compress_images(self, quality=85):
-        """Compress images to reduce file size"""
-        if not self.input_dir.exists():
-            print(f"❌ Input directory '{self.input_dir}' does not exist!")
-            return
-        
-        images = self.get_images()
-        if not images:
-            print("❌ No images found!")
-            return
-        
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        print(f"📦 Compressing {len(images)} image(s) with quality {quality}%...\n")
-        
-        total_original_size = 0
-        total_compressed_size = 0
-        
-        for img_path in images:
-            try:
-                original_size = img_path.stat().st_size
-                total_original_size += original_size
-                
-                with Image.open(img_path) as img:
-                    output_path = self.output_dir / img_path.name
-                    
-                    # Optimize based on format
-                    if img_path.suffix.lower() in ['.jpg', '.jpeg']:
-                        img.save(output_path, 'JPEG', quality=quality, optimize=True)
-                    elif img_path.suffix.lower() == '.png':
-                        img.save(output_path, 'PNG', optimize=True)
-                    else:
-                        img.save(output_path, quality=quality, optimize=True)
-                    
-                    compressed_size = output_path.stat().st_size
-                    total_compressed_size += compressed_size
-                    
-                    reduction = ((original_size - compressed_size) / original_size) * 100
-                    
-                    print(f"✅ {img_path.name}: {self._format_size(original_size)} → "
-                          f"{self._format_size(compressed_size)} (-{reduction:.1f}%)")
-                    self.processed_count += 1
-                    
-            except Exception as e:
-                print(f"❌ Error compressing {img_path.name}: {e}")
-        
-        total_reduction = ((total_original_size - total_compressed_size) / total_original_size) * 100
-        
-        print(f"\n✨ Compressed {self.processed_count} image(s)")
-        print(f"💾 Total saved: {self._format_size(total_original_size - total_compressed_size)} "
-              f"(-{total_reduction:.1f}%)")
-        print(f"📁 Output directory: {self.output_dir}")
-    
-    def add_watermark(self, text, position='bottom-right', opacity=128):
-        """Add text watermark to images"""
-        if not self.input_dir.exists():
-            print(f"❌ Input directory '{self.input_dir}' does not exist!")
-            return
-        
-        images = self.get_images()
-        if not images:
-            print("❌ No images found!")
-            return
-        
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        print(f"💧 Adding watermark '{text}' to {len(images)} image(s)...\n")
-        
-        for img_path in images:
-            try:
-                with Image.open(img_path) as img:
-                    # Convert to RGBA if necessary
-                    if img.mode != 'RGBA':
-                        img = img.convert('RGBA')
-                    
-                    # Create watermark layer
-                    watermark = Image.new('RGBA', img.size, (0, 0, 0, 0))
-                    draw = ImageDraw.Draw(watermark)
-                    
-                    # Try to use a nice font, fall back to default
+        for size, file_list in size_groups.items():
+            if len(file_list) > 1:  # Only hash if multiple files have same size
+                for file_path in file_list:
                     try:
-                        font_size = max(20, img.height // 30)
-                        font = ImageFont.truetype("arial.ttf", font_size)
-                    except:
-                        font = ImageFont.load_default()
+                        file_hash = self._hash_file(file_path)
+                        
+                        if file_hash in hash_dict:
+                            self.duplicates[file_hash].append(file_path)
+                            if len(self.duplicates[file_hash]) == 1:
+                                self.duplicates[file_hash].insert(0, hash_dict[file_hash])
+                        else:
+                            hash_dict[file_hash] = file_path
+                        
+                        processed += 1
+                        if processed % 10 == 0:
+                            print(f"  Processed {processed} files...", end='\r')
                     
-                    # Get text bounding box
-                    bbox = draw.textbbox((0, 0), text, font=font)
-                    text_width = bbox[2] - bbox[0]
-                    text_height = bbox[3] - bbox[1]
-                    
-                    # Calculate position
-                    margin = 10
-                    if position == 'bottom-right':
-                        x = img.width - text_width - margin
-                        y = img.height - text_height - margin
-                    elif position == 'bottom-left':
-                        x = margin
-                        y = img.height - text_height - margin
-                    elif position == 'top-right':
-                        x = img.width - text_width - margin
-                        y = margin
-                    elif position == 'top-left':
-                        x = margin
-                        y = margin
-                    elif position == 'center':
-                        x = (img.width - text_width) // 2
-                        y = (img.height - text_height) // 2
-                    else:
-                        x = img.width - text_width - margin
-                        y = img.height - text_height - margin
-                    
-                    # Draw text with semi-transparency
-                    draw.text((x, y), text, fill=(255, 255, 255, opacity), font=font)
-                    
-                    # Composite watermark onto image
-                    watermarked = Image.alpha_composite(img, watermark)
-                    
-                    # Convert back to original mode if needed
-                    if img_path.suffix.lower() in ['.jpg', '.jpeg']:
-                        watermarked = watermarked.convert('RGB')
-                    
-                    output_path = self.output_dir / img_path.name
-                    watermarked.save(output_path, quality=95)
-                    
-                    print(f"✅ {img_path.name}")
-                    self.processed_count += 1
-                    
-            except Exception as e:
-                print(f"❌ Error watermarking {img_path.name}: {e}")
+                    except Exception as e:
+                        print(f"\n⚠️  Error hashing {file_path}: {e}")
         
-        print(f"\n✨ Watermarked {self.processed_count} image(s)")
-        print(f"📁 Output directory: {self.output_dir}")
+        print(f"\n✅ Processed {processed} files")
+        
+        # Remove entries with no duplicates
+        self.duplicates = {k: v for k, v in self.duplicates.items() if len(v) > 1}
+        
+        return self.duplicates
+    
+    def display_duplicates(self):
+        """Display found duplicates"""
+        if not self.duplicates:
+            print("\n✨ No duplicate files found!")
+            return
+        
+        total_duplicates = sum(len(files) - 1 for files in self.duplicates.values())
+        total_waste = 0
+        
+        print(f"\n{'='*80}")
+        print(f"📋 DUPLICATE FILES REPORT")
+        print(f"{'='*80}\n")
+        
+        for i, (file_hash, files) in enumerate(self.duplicates.items(), 1):
+            file_size = files[0].stat().st_size
+            wasted_space = file_size * (len(files) - 1)
+            total_waste += wasted_space
+            
+            print(f"Group {i} - {len(files)} copies ({self._format_size(file_size)} each)")
+            print(f"Hash: {file_hash[:16]}...")
+            print(f"Wasted space: {self._format_size(wasted_space)}")
+            
+            for j, file_path in enumerate(files):
+                marker = "🟢 [KEEP]" if j == 0 else "🔴 [DUPLICATE]"
+                print(f"  {marker} {file_path}")
+            print()
+        
+        print(f"{'='*80}")
+        print(f"Summary:")
+        print(f"  Total duplicate files: {total_duplicates}")
+        print(f"  Total wasted space: {self._format_size(total_waste)}")
+        print(f"{'='*80}\n")
+    
+    def delete_duplicates(self, interactive=True):
+        """Delete duplicate files (keeps first occurrence)"""
+        if not self.duplicates:
+            print("No duplicates to delete!")
+            return
+        
+        deleted_count = 0
+        freed_space = 0
+        
+        for file_hash, files in self.duplicates.items():
+            # Keep first file, delete rest
+            for file_path in files[1:]:
+                if interactive:
+                    response = input(f"Delete {file_path}? (y/n): ").lower()
+                    if response != 'y':
+                        continue
+                
+                try:
+                    file_size = file_path.stat().st_size
+                    file_path.unlink()
+                    print(f"🗑️  Deleted: {file_path}")
+                    deleted_count += 1
+                    freed_space += file_size
+                except Exception as e:
+                    print(f"❌ Error deleting {file_path}: {e}")
+        
+        print(f"\n✅ Deleted {deleted_count} duplicate file(s)")
+        print(f"💾 Freed {self._format_size(freed_space)} of space")
+    
+    def move_duplicates(self, destination):
+        """Move duplicate files to a separate folder"""
+        if not self.duplicates:
+            print("No duplicates to move!")
+            return
+        
+        dest_dir = Path(destination)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        
+        moved_count = 0
+        
+        print(f"📦 Moving duplicates to: {dest_dir}\n")
+        
+        for file_hash, files in self.duplicates.items():
+            # Move all but first file
+            for file_path in files[1:]:
+                try:
+                    dest_path = dest_dir / file_path.name
+                    
+                    # Handle name conflicts
+                    if dest_path.exists():
+                        dest_path = self._get_unique_path(dest_path)
+                    
+                    shutil.move(str(file_path), str(dest_path))
+                    print(f"📦 Moved: {file_path.name}")
+                    moved_count += 1
+                except Exception as e:
+                    print(f"❌ Error moving {file_path}: {e}")
+        
+        print(f"\n✅ Moved {moved_count} duplicate file(s)")
+    
+    def generate_report(self, output_file='duplicates_report.txt'):
+        """Generate a text report of duplicates"""
+        if not self.duplicates:
+            print("No duplicates to report!")
+            return
+        
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write("DUPLICATE FILES REPORT\n")
+            f.write("=" * 80 + "\n\n")
+            
+            for i, (file_hash, files) in enumerate(self.duplicates.items(), 1):
+                file_size = files[0].stat().st_size
+                
+                f.write(f"Group {i} - {len(files)} copies\n")
+                f.write(f"Size: {self._format_size(file_size)}\n")
+                f.write(f"Hash: {file_hash}\n")
+                
+                for j, file_path in enumerate(files):
+                    status = "ORIGINAL" if j == 0 else "DUPLICATE"
+                    f.write(f"  [{status}] {file_path}\n")
+                f.write("\n")
+            
+            total_duplicates = sum(len(files) - 1 for files in self.duplicates.values())
+            total_waste = sum(
+                files[0].stat().st_size * (len(files) - 1)
+                for files in self.duplicates.values()
+            )
+            
+            f.write("=" * 80 + "\n")
+            f.write(f"Total duplicate files: {total_duplicates}\n")
+            f.write(f"Total wasted space: {self._format_size(total_waste)}\n")
+        
+        print(f"✅ Report saved to: {output_file}")
+    
+    def _get_files(self):
+        """Get list of files to process"""
+        if self.recursive:
+            return [p for p in self.directory.rglob('*') if p.is_file()]
+        else:
+            return [p for p in self.directory.iterdir() if p.is_file()]
+    
+    def _hash_file(self, file_path, chunk_size=8192):
+        """Compute hash of a file"""
+        if self.hash_algorithm == 'md5':
+            hasher = hashlib.md5()
+        elif self.hash_algorithm == 'sha256':
+            hasher = hashlib.sha256()
+        else:
+            hasher = hashlib.md5()
+        
+        with open(file_path, 'rb') as f:
+            while chunk := f.read(chunk_size):
+                hasher.update(chunk)
+        
+        return hasher.hexdigest()
     
     def _format_size(self, size):
         """Format file size in human-readable format"""
-        for unit in ['B', 'KB', 'MB', 'GB']:
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
             if size < 1024.0:
                 return f"{size:.2f} {unit}"
             size /= 1024.0
-        return f"{size:.2f} TB"
+        return f"{size:.2f} PB"
+    
+    def _get_unique_path(self, path):
+        """Generate a unique path if file already exists"""
+        path = Path(path)
+        counter = 1
+        while path.exists():
+            new_name = f"{path.stem}_{counter}{path.suffix}"
+            path = path.parent / new_name
+            counter += 1
+        return path
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Batch process images: resize, convert, compress, watermark',
+        description='Find and manage duplicate files',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python processor.py ./images --resize 800
-  python processor.py ./photos --resize 1920 1080 --no-aspect
-  python processor.py ./pics --convert jpg
-  python processor.py ./images --compress 75
-  python processor.py ./photos --watermark "© 2024" --position bottom-right
-  python processor.py ./images --resize 1000 --output ./processed
+  python finder.py ~/Downloads
+  python finder.py ~/Documents --recursive --algorithm sha256
+  python finder.py ~/Photos --delete --interactive
+  python finder.py ~/Files --move ./duplicates
+  python finder.py ~/Data --report duplicates.txt
         """
     )
     
-    parser.add_argument('input_dir', help='Input directory containing images')
-    parser.add_argument('--output', '-o', help='Output directory (default: input_dir/processed)')
-    
-    # Resize options
-    parser.add_argument('--resize', nargs='+', type=int, metavar=('WIDTH', 'HEIGHT'),
-                       help='Resize images (provide width and/or height)')
-    parser.add_argument('--no-aspect', action='store_true', help='Do not maintain aspect ratio')
-    
-    # Convert options
-    parser.add_argument('--convert', choices=['jpg', 'jpeg', 'png', 'webp', 'bmp'],
-                       help='Convert images to format')
-    
-    # Compress options
-    parser.add_argument('--compress', type=int, metavar='QUALITY',
-                       help='Compress images (quality 1-100, default: 85)')
-    
-    # Watermark options
-    parser.add_argument('--watermark', metavar='TEXT', help='Add text watermark')
-    parser.add_argument('--position', choices=['top-left', 'top-right', 'bottom-left', 
-                                               'bottom-right', 'center'],
-                       default='bottom-right', help='Watermark position')
-    parser.add_argument('--opacity', type=int, default=128,
-                       help='Watermark opacity (0-255, default: 128)')
+    parser.add_argument('directory', help='Directory to scan for duplicates')
+    parser.add_argument('-r', '--recursive', action='store_true', help='Scan subdirectories')
+    parser.add_argument('--algorithm', choices=['md5', 'sha256'], default='md5',
+                       help='Hash algorithm (default: md5)')
+    parser.add_argument('--delete', action='store_true', help='Delete duplicate files')
+    parser.add_argument('--interactive', action='store_true', help='Confirm each deletion')
+    parser.add_argument('--move', metavar='DEST', help='Move duplicates to directory')
+    parser.add_argument('--report', metavar='FILE', help='Generate report file')
     
     args = parser.parse_args()
     
-    processor = ImageProcessor(args.input_dir, args.output)
+    finder = DuplicateFinder(args.directory, args.recursive)
     
-    # Process images based on options
-    if args.resize:
-        if len(args.resize) == 1:
-            width = args.resize[0]
-            height = None
-        elif len(args.resize) == 2:
-            width, height = args.resize
-        else:
-            print("❌ --resize takes 1 or 2 arguments (width and/or height)")
-            return
-        
-        processor.resize_images(width, height, not args.no_aspect)
+    # Find duplicates
+    finder.find_duplicates(args.algorithm)
     
-    elif args.convert:
-        processor.convert_format(args.convert)
+    # Display results
+    finder.display_duplicates()
     
-    elif args.compress is not None:
-        quality = max(1, min(100, args.compress))  # Clamp to 1-100
-        processor.compress_images(quality)
+    # Perform actions
+    if args.delete:
+        if not args.interactive:
+            confirm = input("\n⚠️  Delete ALL duplicates without confirmation? (yes/no): ")
+            if confirm.lower() != 'yes':
+                print("Cancelled.")
+                return
+        finder.delete_duplicates(args.interactive)
     
-    elif args.watermark:
-        processor.add_watermark(args.watermark, args.position, args.opacity)
+    elif args.move:
+        finder.move_duplicates(args.move)
     
-    else:
-        print("❌ Please specify an operation: --resize, --convert, --compress, or --watermark")
-        print("Use --help for more information")
+    elif args.report:
+        finder.generate_report(args.report)
 
 
 if __name__ == "__main__":
