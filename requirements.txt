@@ -1,0 +1,4 @@
+Pillow>=10.0.0
+psutil>=5.9.0
+colorama>=0.4.6
+tqdm>=4.65.0
